@@ -30,6 +30,20 @@ sing-box change hy2 hop 30000-40000
 sing-box change hy2 hop off
 ```
 
+## UFW 防火墙
+
+主菜单进入“其他” → “HY2端口跳跃-UFW”，可以查看、一键放开或一键关闭脚本控制的 UDP 范围。也可以直接运行：
+
+```bash
+sing-box ufw open
+sing-box ufw status
+sing-box ufw close
+```
+
+脚本会给自己创建的规则添加标记并单独记录，只删除自己创建的规则。如果相同端口范围已经由你手动放行，脚本会跳过且不会接管。开启脚本 UFW 管理后，新增、删除或修改 HY2 跳跃范围会自动同步。
+
+为避免启用 UFW 时误封 SSH，`open` 只添加放行规则，不会自动执行 `ufw enable`。如果 `ufw status` 显示 inactive，需要你确认 SSH 等必要端口已经放行后再自行启用 UFW。
+
 也可以直接运行 `sing-box`，在交互式创建 Hysteria2 时填写范围。端口跳跃需要 Linux 已安装 `nftables` 或 `iptables`，并需要在系统防火墙及云服务商安全组中放行整个 UDP 范围。sing-box 本身仍只监听创建时指定的单端口。
 
 客户端分享 URI 使用 Hysteria2 标准多端口格式。sing-box 客户端配置可使用：

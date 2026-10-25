@@ -352,6 +352,7 @@ create() {
             port_hopping_save "$is_config_name" "$port" "$is_hop_range" || err "保存端口跳跃配置失败."
             port_hopping_install_boot_service
             port_hopping_apply_all || err "应用端口跳跃规则失败，请检查 nftables/iptables."
+            port_hopping_ufw_sync || warn "同步 UFW 端口规则失败."
         fi
         if [[ $is_new_install ]]; then
             # config.json
@@ -691,6 +692,7 @@ del() {
         if [[ $is_hop_meta && -f $is_hop_meta ]]; then
             port_hopping_remove "$is_config_file" 2>/dev/null || true
             port_hopping_apply_all 2>/dev/null || true
+            port_hopping_ufw_sync &>/dev/null || warn "同步 UFW 端口规则失败."
         fi
         rm -rf $is_conf_dir/"$is_config_file"
         [[ ! $is_new_json ]] && manage restart &
@@ -1702,7 +1704,7 @@ is_main_menu() {
         show_help
         ;;
     9)
-        ask list is_do_other "启用BBR 查看日志 测试运行 重装脚本 设置DNS"
+        ask list is_do_other "启用BBR 查看日志 测试运行 重装脚本 设置DNS HY2端口跳跃-UFW"
         case $REPLY in
         1)
             load bbr.sh
@@ -1721,6 +1723,9 @@ is_main_menu() {
         5)
             load dns.sh
             dns_set
+            ;;
+        6)
+            port_hopping_ufw_menu
             ;;
         esac
         ;;
@@ -1830,6 +1835,15 @@ main() {
     log)
         load log.sh
         log_set $2
+        ;;
+    ufw | firewall)
+        case ${2,,} in
+        open | allow | on) port_hopping_ufw_open ;;
+        close | deny | off) port_hopping_ufw_close ;;
+        status | s) port_hopping_ufw_status ;;
+        '') port_hopping_ufw_menu ;;
+        *) err "无法识别 ($2), 请使用: $is_core ufw [open | close | status]" ;;
+        esac
         ;;
     url | qr)
         url_qr $@

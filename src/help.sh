@@ -43,6 +43,7 @@ show_help() {
             "   hop [name] [start-end|off]                     更改或关闭 HY2 端口跳跃\n"
             "进阶:"
             "   dns [...]                                       设置 DNS"
+            "   ufw [open | close | status]                    管理 HY2 跳跃端口的 UFW 规则"
             "   dd, ddel [name...]                              删除多个配置**"
             "   fix [name]                                      修复一个配置"
             "   fix-all                                         修复全部配置"
