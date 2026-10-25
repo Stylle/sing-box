@@ -68,6 +68,7 @@ info_list=(
     "用户名 (Username)"
     "跳过证书验证 (allowInsecure)"
     "拥塞控制算法 (congestion_control)"
+    "端口跳跃范围 (port hopping)"
 )
 change_list=(
     "更改协议"
@@ -83,6 +84,7 @@ change_list=(
     "更改 SNI (serverName)"
     "更改伪装网站"
     "更改用户名 (Username)"
+    "更改端口跳跃范围"
 )
 servername_list=(
     www.amazon.com
@@ -346,6 +348,11 @@ create() {
         [[ $is_config_file ]] && is_no_del_msg=1 && del $is_config_file
         # save json to file
         cat <<<$is_new_json >$is_json_file
+        if [[ $net == 'hysteria2' && $is_hop_range ]]; then
+            port_hopping_save "$is_config_name" "$port" "$is_hop_range" || err "保存端口跳跃配置失败."
+            port_hopping_install_boot_service
+            port_hopping_apply_all || err "应用端口跳跃规则失败，请检查 nftables/iptables."
+        fi
         if [[ $is_new_install ]]; then
             # config.json
             create config.json
@@ -438,6 +445,9 @@ change() {
             ;;
         web | proxy-site)
             is_change_id=11
+            ;;
+        hop | port-hop | port_hopping | hopping)
+            is_change_id=13
             ;;
         *)
             [[ $is_try_change ]] && return
@@ -647,6 +657,21 @@ change() {
         ask string is_socks_user "请输入新用户名 (Username):"
         add $net
         ;;
+    13)
+        [[ $net != 'hysteria2' ]] && err "($is_config_file) 不支持端口跳跃."
+        is_new_hop_range=$3
+        [[ ! $is_new_hop_range ]] && {
+            echo -ne "请输入端口跳跃范围 (例如 20000-30000，输入 off 关闭):"
+            read -r is_new_hop_range
+        }
+        if [[ ${is_new_hop_range,,} == 'off' || ${is_new_hop_range,,} == 'none' ]]; then
+            unset is_hop_range
+        else
+            is_hop_range=$(port_hopping_validate "$is_new_hop_range") || err "请输入正确的端口范围，例如 20000-30000."
+            port_hopping_require_backend || err "请先安装 nftables 或 iptables."
+        fi
+        add $net
+        ;;
     esac
 }
 
@@ -661,6 +686,11 @@ del() {
         if [[ $is_main_start && ! $is_no_del_msg ]]; then
             msg "\n是否删除配置文件?: $is_config_file"
             pause
+        fi
+        is_hop_meta=$(port_hopping_meta_file "$is_config_file" 2>/dev/null)
+        if [[ $is_hop_meta && -f $is_hop_meta ]]; then
+            port_hopping_remove "$is_config_file" 2>/dev/null || true
+            port_hopping_apply_all 2>/dev/null || true
         fi
         rm -rf $is_conf_dir/"$is_config_file"
         [[ ! $is_new_json ]] && manage restart &
@@ -694,6 +724,7 @@ uninstall() {
     else
         ask string y "是否卸载 ${is_core_name}? [y]:"
     fi
+    port_hopping_uninstall
     manage stop &>/dev/null
     manage disable &>/dev/null
     rm -rf $is_core_dir $is_log_dir $is_sh_bin ${is_sh_bin/$is_core/sb}
@@ -754,6 +785,7 @@ manage() {
         is_do_name_msg=$is_core_name
         ;;
     esac
+    [[ $is_do_name == "$is_core" && $is_do == 'stop' ]] && port_hopping_clear 2>/dev/null || true
     if [[ $is_systemd ]]; then
         systemctl $is_do $is_do_name 2>/dev/null
     elif [[ $is_openrc ]]; then
@@ -768,6 +800,9 @@ manage() {
             rc-service $is_do_name $is_do 2>/dev/null
             ;;
         esac
+    fi
+    if [[ $is_do_name == "$is_core" && ($is_do == 'start' || $is_do == 'restart') ]]; then
+        port_hopping_apply_all 2>/dev/null || warn "端口跳跃规则应用失败，请检查 nftables/iptables."
     fi
     [[ $is_test_run && ! $is_new_install ]] && {
         sleep 2
@@ -856,10 +891,16 @@ add() {
         is_use_uuid=$3
         is_add_opts="[port] [uuid]"
         ;;
-    trojan* | hysteria*)
+    trojan*)
         is_use_port=$2
         is_use_pass=$3
         is_add_opts="[port] [password]"
+        ;;
+    hysteria*)
+        is_use_port=$2
+        is_use_pass=$3
+        is_use_hop=$4
+        is_add_opts="[port] [password] [hop-range|off]"
         ;;
     *reality*)
         is_reality=1
@@ -981,6 +1022,14 @@ add() {
         [[ $is_use_servername ]] && is_servername=$is_use_servername
         [[ $is_use_socks_user ]] && is_socks_user=$is_use_socks_user
         [[ $is_use_socks_pass ]] && is_socks_pass=$is_use_socks_pass
+        if [[ $is_use_hop ]]; then
+            if [[ ${is_use_hop,,} == 'off' || ${is_use_hop,,} == 'none' ]]; then
+                unset is_hop_range
+            else
+                is_hop_range=$(port_hopping_validate "$is_use_hop") || err "($is_use_hop) 不是有效的端口跳跃范围，例如 20000-30000. $is_err_tips"
+                port_hopping_require_backend || err "请先安装 nftables 或 iptables."
+            fi
+        fi
     fi
 
     # anytls with domain (ACME TLS)
@@ -1030,6 +1079,14 @@ add() {
                 [[ ! $ss_method ]] && ask set_ss_method
                 # set password
                 [[ ! $ss_password ]] && ask string ss_password "请设置密码:"
+                ;;
+            hysteria2)
+                echo -ne "请输入端口跳跃范围 (例如 20000-30000，留空禁用):"
+                read -r is_use_hop
+                if [[ $is_use_hop ]]; then
+                    is_hop_range=$(port_hopping_validate "$is_use_hop") || err "请输入正确的端口范围，例如 20000-30000."
+                    port_hopping_require_backend || err "请先安装 nftables 或 iptables."
+                fi
                 ;;
             esac
 
@@ -1132,6 +1189,7 @@ get() {
             fi
             is_socks_user=$username
             is_socks_pass=$password
+            port_hopping_load "$is_config_file" 2>/dev/null || unset is_hop_range is_hop_target_port
 
             # extract anytls ACME domain
             [[ $is_protocol == 'anytls' ]] && {
@@ -1417,12 +1475,18 @@ info() {
         is_info_str=($is_protocol $is_addr $port $password tcp tls true)
         ;;
     hy*)
-        is_can_change=(0 1 4)
+        is_can_change=(0 1 4 13)
         is_info_show=(0 1 2 10 8 9 20)
         # fix xray core for client use.
         is_sha256=$(openssl x509 -noout -fingerprint -sha256 -in $is_core_dir/bin/tls.cer | sed 's/.*=//;s/://g')
-        is_url="$is_protocol://$password@$is_addr:$port?alpn=h3&insecure=1&allowInsecure=1&pinSHA256=$is_sha256#233boy-$net-$is_addr"
+        is_hy2_url_port=$port
+        [[ $is_hop_range ]] && is_hy2_url_port=$is_hop_range
+        is_url="$is_protocol://$password@$is_addr:$is_hy2_url_port?alpn=h3&insecure=1&allowInsecure=1&pinSHA256=$is_sha256#233boy-$net-$is_addr"
         is_info_str=($is_protocol $is_addr $port $password tls h3 "true (设置, 固定证书>证书指纹(SHA-256): $is_sha256)")
+        if [[ $is_hop_range ]]; then
+            is_info_show+=(22)
+            is_info_str+=("$is_hop_range")
+        fi
         ;;
     tuic)
         is_insecure=1
@@ -1590,7 +1654,11 @@ update() {
     fi
     download $is_update_name $is_new_ver
     msg "更新成功, 当前 $is_show_name 版本: $(_green $is_new_ver)\n"
-    msg "$(_green 请查看更新说明: https://github.com/$is_update_repo/releases/tag/$is_new_ver)\n"
+    if [[ $is_update_name == 'sh' && $is_new_ver == "${is_sh_branch:-main}" ]]; then
+        msg "$(_green 更新来源: https://github.com/$is_update_repo/tree/${is_sh_branch:-main})\n"
+    else
+        msg "$(_green 请查看更新说明: https://github.com/$is_update_repo/releases/tag/$is_new_ver)\n"
+    fi
     [[ $is_update_name != 'sh' ]] && manage restart $is_update_name &
 }
 

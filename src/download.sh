@@ -6,7 +6,8 @@ get_latest_version() {
         ;;
     sh)
         name="$is_core_name 脚本"
-        url="https://api.github.com/repos/$is_sh_repo/releases/latest?v=$RANDOM"
+        latest_ver=${is_sh_branch:-main}
+        return
         ;;
     caddy)
         name="Caddy"
@@ -40,9 +41,15 @@ download() {
     sh)
         name="$is_core_name 脚本"
         tmpfile=$tmpdir/sh.tar.gz
-        link="https://github.com/${is_sh_repo}/releases/download/${latest_ver}/code.tar.gz"
+        if [[ $latest_ver == "${is_sh_branch:-main}" || $latest_ver == 'main' ]]; then
+            link="https://codeload.github.com/${is_sh_repo}/tar.gz/refs/heads/${is_sh_branch:-main}"
+            is_sh_strip='--strip-components 1'
+        else
+            link="https://github.com/${is_sh_repo}/releases/download/${latest_ver}/code.tar.gz"
+            is_sh_strip=
+        fi
         download_file
-        tar zxf $tmpfile -C $is_sh_dir
+        tar zxf $tmpfile $is_sh_strip -C $is_sh_dir
         chmod +x $is_sh_bin ${is_sh_bin/$is_core/sb}
         ;;
     caddy)

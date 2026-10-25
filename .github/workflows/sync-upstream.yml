@@ -1,0 +1,55 @@
+name: Sync upstream
+
+on:
+  schedule:
+    - cron: "18 20 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  issues: write
+
+concurrency:
+  group: sync-upstream-main
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    if: github.repository == 'Stylle/sing-box'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout fork
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Merge 233boy/sing-box main
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git remote add upstream https://github.com/233boy/sing-box.git
+          git fetch upstream main --tags
+
+          if git merge-base --is-ancestor upstream/main HEAD; then
+            echo "Fork already contains the latest upstream commit."
+            exit 0
+          fi
+
+          if ! git merge --no-edit upstream/main; then
+            conflicts=$(git diff --name-only --diff-filter=U | paste -sd ', ' -)
+            git merge --abort
+            title="Upstream sync conflict $(date -u +%F)"
+            if gh issue list --state open --search 'Upstream sync conflict in:title' --json title --jq 'length' | grep -qv '^0$'; then
+              echo "An open sync-conflict issue already exists."
+            else
+              gh issue create --title "$title" --body "Automatic merge from 233boy/sing-box failed. Conflicting files: ${conflicts:-unknown}. Resolve the conflict manually; the workflow intentionally did not overwrite the fork's HY2 port-hopping changes."
+            fi
+            exit 1
+          fi
+
+          bash -n install.sh sing-box.sh src/*.sh tests/*.sh
+          bash tests/port-hopping-test.sh
+          git push origin HEAD:main

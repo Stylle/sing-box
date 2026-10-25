@@ -70,7 +70,8 @@ is_conf_dir=$is_core_dir/conf
 is_log_dir=/var/log/$is_core
 is_sh_bin=/usr/local/bin/$is_core
 is_sh_dir=$is_core_dir/sh
-is_sh_repo=$author/$is_core
+is_sh_repo=${SING_BOX_SCRIPT_REPO:-Stylle/$is_core}
+is_sh_branch=${SING_BOX_SCRIPT_BRANCH:-main}
 is_pkg="wget tar bash"
 # Alpine: gcompat provides glibc compatibility for prebuilt binaries
 [[ $cmd =~ apk ]] && is_pkg="$is_pkg gcompat jq"
@@ -126,11 +127,12 @@ msg() {
 
 # show help msg
 show_help() {
-    echo -e "Usage: $0 [-f xxx | -l | -p xxx | -v xxx | -h]"
+    echo -e "Usage: $0 [-f xxx | -l | -p xxx | -v xxx | -u | -h]"
     echo -e "  -f, --core-file <path>          自定义 $is_core_name 文件路径, e.g., -f /root/$is_core-linux-amd64.tar.gz"
     echo -e "  -l, --local-install             本地获取安装脚本, 使用当前目录"
     echo -e "  -p, --proxy <addr>              使用代理下载, e.g., -p http://127.0.0.1:2333"
     echo -e "  -v, --core-version <ver>        自定义 $is_core_name 版本, e.g., -v v1.8.13"
+    echo -e "  -u, --script-only               仅更新管理脚本，不改动核心与配置"
     echo -e "  -h, --help                      显示此帮助界面\n"
 
     exit 0
@@ -177,7 +179,7 @@ download() {
         is_ok=$is_core_ok
         ;;
     sh)
-        link=https://github.com/${is_sh_repo}/releases/latest/download/code.tar.gz
+        link=https://codeload.github.com/${is_sh_repo}/tar.gz/refs/heads/${is_sh_branch}
         name="$is_core_name 脚本"
         tmpfile=$tmpsh
         is_ok=$is_sh_ok
@@ -283,6 +285,10 @@ pass_args() {
             is_core_ver=v${2//v/}
             shift 2
             ;;
+        -u | --script-only)
+            script_only=1
+            shift 1
+            ;;
         -h | --help)
             show_help
             ;;
@@ -295,6 +301,20 @@ pass_args() {
     [[ $is_core_ver && $is_core_file ]] && {
         err "无法同时自定义 ${is_core_name} 版本和 ${is_core_name} 文件."
     }
+}
+
+update_script_only() {
+    [[ ! -d $is_sh_dir || ! -d $is_core_dir ]] && err "未检测到已安装的 $is_core_name."
+    [[ ! $is_wget ]] && err "仅更新脚本需要 wget，请先安装 wget."
+    mkdir -p "$tmpdir/update"
+    download sh
+    [[ ! -f $is_sh_ok ]] && err "下载 ${is_core_name} 脚本失败."
+    tar zxf "$is_sh_ok" --strip-components 1 -C "$tmpdir/update"
+    [[ ! -f $tmpdir/update/sing-box.sh || ! -f $tmpdir/update/src/init.sh ]] && err "下载的脚本包不完整."
+    cp -rf "$tmpdir/update/." "$is_sh_dir/"
+    chmod +x "$is_sh_bin" "${is_sh_bin/$is_core/sb}"
+    msg ok "管理脚本已更新，配置和 sing-box 核心未改动."
+    exit_and_del_tmpdir ok
 }
 
 # exit and remove tmpdir
@@ -312,14 +332,15 @@ exit_and_del_tmpdir() {
 
 # main
 main() {
+    # check parameters
+    [[ $# -gt 0 ]] && pass_args $@
+
+    [[ $script_only ]] && update_script_only
 
     # check old version
     [[ -f $is_sh_bin && -d $is_core_dir/bin && -d $is_sh_dir && -d $is_conf_dir ]] && {
         err "检测到脚本已安装, 如需重装请使用${green} ${is_core} reinstall ${none}命令."
     }
-
-    # check parameters
-    [[ $# -gt 0 ]] && pass_args $@
 
     # show welcome msg
     clear
@@ -408,7 +429,7 @@ main() {
     if [[ $local_install ]]; then
         cp -rf $PWD/* $is_sh_dir
     else
-        tar zxf $is_sh_ok -C $is_sh_dir
+        tar zxf $is_sh_ok --strip-components 1 -C $is_sh_dir
     fi
 
     # create core bin dir
@@ -448,6 +469,7 @@ main() {
     # create condf dir
     mkdir -p $is_conf_dir
 
+    load port-hopping.sh
     load core.sh
     # create a reality config
     add reality
