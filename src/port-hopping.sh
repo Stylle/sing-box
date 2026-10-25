@@ -180,17 +180,29 @@ port_hopping_ufw_require() {
     }
 }
 
+port_hopping_ufw_validate_spec() {
+    local spec=$1
+    if port_hopping_validate "$spec" &>/dev/null; then
+        port_hopping_validate "$spec"
+    elif [[ $spec =~ ^[1-9][0-9]{0,4}$ ]] && ((spec <= 65535)); then
+        echo "$spec"
+    else
+        return 1
+    fi
+}
+
 port_hopping_ufw_remove_owned() {
-    local owned_file remain_file config_name range comment ufw_bin failed=
+    local owned_file remain_file config_name spec comment ufw_bin failed= ufw_spec
     ufw_bin=$(type -P ufw) || return 1
     owned_file=$(port_hopping_ufw_owned_file)
     [[ -f $owned_file ]] || return 0
     remain_file=$(mktemp) || return 1
-    while IFS='|' read -r config_name range comment; do
-        port_hopping_validate "$range" &>/dev/null || continue
+    while IFS='|' read -r config_name spec comment; do
+        spec=$(port_hopping_ufw_validate_spec "$spec") || continue
         [[ $comment == sing-box-hy2:* ]] || continue
-        if ! "$ufw_bin" --force delete allow "${range/-/:}/udp" comment "$comment" &>/dev/null; then
-            printf '%s|%s|%s\n' "$config_name" "$range" "$comment" >>"$remain_file"
+        ufw_spec="${spec/-/:}/udp"
+        if ! "$ufw_bin" --force delete allow "$ufw_spec" comment "$comment" &>/dev/null; then
+            printf '%s|%s|%s\n' "$config_name" "$spec" "$comment" >>"$remain_file"
             failed=1
         fi
     done <"$owned_file"
@@ -202,8 +214,27 @@ port_hopping_ufw_remove_owned() {
     [[ ! $failed ]]
 }
 
+port_hopping_ufw_add_rule() {
+    local config_name=$1 spec=$2 kind=$3 ufw_bin owned_file ufw_spec comment added_output
+    spec=$(port_hopping_ufw_validate_spec "$spec") || return 1
+    ufw_bin=$(type -P ufw) || return 1
+    owned_file=$(port_hopping_ufw_owned_file)
+    ufw_spec="${spec/-/:}/udp"
+    comment="sing-box-hy2:$config_name:$kind"
+    added_output=$("$ufw_bin" show added 2>/dev/null || true)
+    if grep -Eq "^ufw allow ${ufw_spec//./\\.}([[:space:]]|$)" <<<"$added_output"; then
+        echo "跳过已存在的 UFW 规则: $ufw_spec（不会由脚本删除）"
+        return 0
+    fi
+    if ! "$ufw_bin" allow "$ufw_spec" comment "$comment"; then
+        echo "错误: 添加 UFW 规则失败: $ufw_spec" >&2
+        return 1
+    fi
+    printf '%s|%s|%s\n' "$config_name" "$spec" "$comment" >>"$owned_file"
+}
+
 port_hopping_ufw_open() {
-    local meta_file config_name range comment ufw_range ufw_bin owned_file found= added_output
+    local meta_file config_name range ufw_bin owned_file found=
     port_hopping_ufw_require || return 1
     mkdir -p "$is_port_hopping_dir"
     ufw_bin=$(type -P ufw)
@@ -213,25 +244,17 @@ port_hopping_ufw_open() {
         return 1
     }
     : >"$owned_file"
-    added_output=$("$ufw_bin" show added 2>/dev/null || true)
     for meta_file in "$is_port_hopping_dir"/*.conf; do
         [[ -f $meta_file ]] || continue
         port_hopping_read_meta "$meta_file" || continue
         found=1
         config_name=$(basename "$meta_file" .conf)
         range="$hop_start-$hop_end"
-        ufw_range="$hop_start:$hop_end/udp"
-        comment="sing-box-hy2:$config_name"
-        if grep -Eq "^ufw allow ${hop_start}:${hop_end}/udp([[:space:]]|$)" <<<"$added_output"; then
-            echo "跳过已存在的 UFW 规则: $ufw_range（不会由脚本删除）"
-            continue
-        fi
-        if ! "$ufw_bin" allow "$ufw_range" comment "$comment"; then
-            echo "错误: 添加 UFW 规则失败: $ufw_range" >&2
+        if ! port_hopping_ufw_add_rule "$config_name" "$range" range || \
+            ! port_hopping_ufw_add_rule "$config_name" "$hop_target" listen; then
             port_hopping_ufw_remove_owned || true
             return 1
         fi
-        printf '%s|%s|%s\n' "$config_name" "$range" "$comment" >>"$owned_file"
     done
     [[ $found ]] || {
         rm -f "$owned_file" "$(port_hopping_ufw_marker_file)"
@@ -239,7 +262,7 @@ port_hopping_ufw_open() {
         return 1
     }
     touch "$(port_hopping_ufw_marker_file)"
-    echo "已放行脚本管理的 HY2 UDP 端口范围。"
+    echo "已放行脚本管理的 HY2 UDP 跳跃范围和实际监听端口。"
     "$ufw_bin" status
 }
 
@@ -276,8 +299,8 @@ port_hopping_ufw_status() {
     fi
     if [[ -s $(port_hopping_ufw_owned_file) ]]; then
         echo "脚本创建的规则:"
-        while IFS='|' read -r config_name range comment; do
-            echo "  $config_name -> ${range/-/:}/udp"
+        while IFS='|' read -r config_name spec comment; do
+            echo "  $config_name -> ${spec/-/:}/udp"
         done <"$(port_hopping_ufw_owned_file)"
     else
         echo "脚本创建的规则: 无"

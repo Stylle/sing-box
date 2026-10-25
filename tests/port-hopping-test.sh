@@ -53,10 +53,12 @@ grep -Fq 'udp dport 20000-30000 redirect to :443' "$PORT_HOPPING_TEST_CAPTURE"
 # UFW integration owns only tagged rules and preserves unrelated user rules.
 echo "ufw allow 22/tcp comment 'manual'" >"$PORT_HOPPING_TEST_UFW_STATE"
 port_hopping_ufw_open >/dev/null
-grep -Fq "ufw allow 20000:30000/udp comment 'sing-box-hy2:hysteria2-443.json'" "$PORT_HOPPING_TEST_UFW_STATE"
+grep -Fq "ufw allow 20000:30000/udp comment 'sing-box-hy2:hysteria2-443.json:range'" "$PORT_HOPPING_TEST_UFW_STATE"
+grep -Fq "ufw allow 443/udp comment 'sing-box-hy2:hysteria2-443.json:listen'" "$PORT_HOPPING_TEST_UFW_STATE"
 [[ -f $(port_hopping_ufw_marker_file) ]]
 port_hopping_ufw_open >/dev/null
 [[ $(grep -Fc '20000:30000/udp' "$PORT_HOPPING_TEST_UFW_STATE") == '1' ]]
+[[ $(grep -Fc '443/udp' "$PORT_HOPPING_TEST_UFW_STATE") == '1' ]]
 port_hopping_ufw_close >/dev/null
 grep -Fq "ufw allow 22/tcp comment 'manual'" "$PORT_HOPPING_TEST_UFW_STATE"
 ! grep -Fq 'sing-box-hy2:' "$PORT_HOPPING_TEST_UFW_STATE"
