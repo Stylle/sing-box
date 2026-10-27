@@ -41,6 +41,7 @@ show_help() {
             "   new [name] [...]                                更改协议"
             "   web [name] [domain]                             更改伪装网站"
             "   hop [name] [start-end|off]                     更改或关闭 HY2 端口跳跃\n"
+            "   obfs [name] [on|off] [password]                开启/关闭 HY2 混淆（省略参数交互设置）\n"
             "进阶:"
             "   dns [...]                                       设置 DNS"
             "   ufw [open | close | status]                    管理 HY2 跳跃端口的 UFW 规则"

@@ -21,13 +21,27 @@ jobs:
         run: |
           bash -n install.sh sing-box.sh src/*.sh tests/*.sh
           bash tests/port-hopping-test.sh
+          bash tests/hy2-obfs-test.sh
+      - name: Native HY2 obfuscation acceptance
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p .tools/native
+          gh api repos/SagerNet/sing-box/releases/tags/v1.14.4 > .tools/native/release.json
+          asset=$(jq -cer '.assets[] | select(.name == "sing-box-1.14.4-linux-amd64.tar.gz")' .tools/native/release.json)
+          digest=$(jq -er '.digest | select(startswith("sha256:")) | ltrimstr("sha256:")' <<< "$asset")
+          curl -fL --retry 3 "$(jq -r '.browser_download_url' <<< "$asset")" -o .tools/native/core.tar.gz
+          echo "$digest  .tools/native/core.tar.gz" | sha256sum -c -
+          tar -xzf .tools/native/core.tar.gz --strip-components=1 -C .tools/native
+          SINGBOX_TEST_BIN="$PWD/.tools/native/sing-box" node tests/hy2-obfs-native.cjs
       # - name: test
       #   if: env.is_sh_ver == env.old 
       #   run: |
       #     echo not found new version.
       #     exit 1
       - name: tar
-        run: tar zcvf code.tar.gz ./*
+        run: tar --exclude=.tools -zcvf code.tar.gz ./*
       - name: release
         uses: softprops/action-gh-release@v1
         with:

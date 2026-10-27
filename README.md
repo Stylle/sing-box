@@ -30,6 +30,21 @@ sing-box change hy2 hop 30000-40000
 sing-box change hy2 hop off
 ```
 
+## HY2 混淆开关
+
+运行 `sing-box` → **更改配置** → 选择 HY2 → **开启 / 关闭 HY2 混淆**。支持开启 Salamander、更换密码、关闭；密码留空时保留已有密码，没有则自动生成。默认不启用。
+
+```bash
+# 交互设置
+sing-box change hy2 obfs
+# 开启并设置独立的混淆密码
+sing-box change hy2 obfs on 'your-obfs-password'
+# 关闭
+sing-box change hy2 obfs off
+```
+
+修改前校验，重启失败恢复原配置；端口跳跃、认证密码和 TLS 配置不变。分享链接自动携带 `obfs` / `obfs-password`，查看配置显示开关状态；更改端口、认证密码或跳跃范围时保留混淆。客户端必须重新导入新链接，两端设置不一致将无法连接。多个 HY2 时用配置文件名替换 `hy2`。
+
 ## UFW 防火墙
 
 主菜单进入“其他” → “HY2端口跳跃-UFW”，可以查看、一键放开或一键关闭脚本控制的 UDP 范围。也可以直接运行：

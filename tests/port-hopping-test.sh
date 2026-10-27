@@ -73,6 +73,7 @@ port_hopping_ufw_sync >/dev/null
 
 # Verify that displayed/shareable HY2 URIs use the standard multi-port form.
 . "$repo_dir/src/core.sh"
+. "$repo_dir/src/hy2-obfs.sh"
 openssl() { echo 'sha256 Fingerprint=AA:BB'; }
 is_protocol=hysteria2
 net=hysteria2

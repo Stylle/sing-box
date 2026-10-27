@@ -69,6 +69,7 @@ info_list=(
     "跳过证书验证 (allowInsecure)"
     "拥塞控制算法 (congestion_control)"
     "端口跳跃范围 (port hopping)"
+    "混淆 (obfs)"
 )
 change_list=(
     "更改协议"
@@ -85,6 +86,7 @@ change_list=(
     "更改伪装网站"
     "更改用户名 (Username)"
     "更改端口跳跃范围"
+    "开启 / 关闭 HY2 混淆"
 )
 servername_list=(
     www.amazon.com
@@ -450,6 +452,9 @@ change() {
         hop | port-hop | port_hopping | hopping)
             is_change_id=13
             ;;
+        obfs | obfuscation)
+            is_change_id=14
+            ;;
         *)
             [[ $is_try_change ]] && return
             err "无法识别 ($2) 更改类型."
@@ -672,6 +677,10 @@ change() {
             port_hopping_require_backend || err "请先安装 nftables 或 iptables."
         fi
         add $net
+        ;;
+    14)
+        [[ $net != 'hysteria2' ]] && err "($is_config_file) 不支持 HY2 混淆."
+        hy2_obfs_change "${3:-}" "${4:-}"
         ;;
     esac
 }
@@ -946,6 +955,7 @@ add() {
 
     # remove old protocol args
     if [[ $is_set_new_protocol ]]; then
+        [[ ${is_new_protocol,,} != 'hysteria2' ]] && unset is_hy2_obfs_json is_hy2_obfs_type is_hy2_obfs_password
         case $is_old_net in
         h2 | ws | httpupgrade)
             old_host=$host
@@ -1156,6 +1166,9 @@ get() {
         ;;
     file)
         is_file_str=$2
+        case ${is_file_str,,} in
+        hy | hy2) is_file_str=hysteria2 ;;
+        esac
         [[ ! $is_file_str ]] && is_file_str='.json$'
         # is_all_json=("$(ls $is_conf_dir | grep -E $is_file_str)")
         readarray -t is_all_json <<<"$(ls $is_conf_dir | grep -E -i "$is_file_str" | sed '/dynamic-port-.*-link/d' | head -233)" # limit max 233 lines for show.
@@ -1169,7 +1182,8 @@ get() {
     info)
         get file $2
         if [[ $is_config_file ]]; then
-            is_json_str=$(cat $is_conf_dir/"$is_config_file" | sed s#//.*##)
+            # Prefer valid JSON so URLs and passwords containing // survive.
+            is_json_str=$(jq -c . "$is_conf_dir/$is_config_file" 2>/dev/null) || is_json_str=$(sed 's#//.*##' "$is_conf_dir/$is_config_file")
             is_json_data=$(jq '(.inbounds[0]|.type,.listen_port,(.users[0]|.uuid,.password,.username),.method,.password,.override_port,.override_address,(.transport|.type,.path,.headers.host),(.tls|.server_name,.reality.private_key)),(.outbounds[1].tag)' <<<$is_json_str)
             [[ $? != 0 ]] && err "无法读取此文件: $is_config_file"
             is_up_var_set=(null is_protocol port uuid password username ss_method ss_password door_port door_addr net_type path host is_servername is_private_key is_public_key)
@@ -1192,6 +1206,7 @@ get() {
             is_socks_user=$username
             is_socks_pass=$password
             port_hopping_load "$is_config_file" 2>/dev/null || unset is_hop_range is_hop_target_port
+            hy2_obfs_load "$is_conf_dir/$is_config_file" || err "无法读取 HY2 混淆配置."
 
             # extract anytls ACME domain
             [[ $is_protocol == 'anytls' ]] && {
@@ -1246,6 +1261,7 @@ get() {
             is_protocol=$net
             [[ ! $password ]] && password=$uuid
             json_str="users:[{password:\"$password\"}],$is_tls_json"
+            [[ ${is_hy2_obfs_json:-} ]] && json_str+=",obfs:$is_hy2_obfs_json"
             ;;
         shadowsocks*)
             net=ss
@@ -1477,18 +1493,24 @@ info() {
         is_info_str=($is_protocol $is_addr $port $password tcp tls true)
         ;;
     hy*)
-        is_can_change=(0 1 4 13)
+        is_can_change=(0 1 4 13 14)
         is_info_show=(0 1 2 10 8 9 20)
         # fix xray core for client use.
         is_sha256=$(openssl x509 -noout -fingerprint -sha256 -in $is_core_dir/bin/tls.cer | sed 's/.*=//;s/://g')
         is_hy2_url_port=$port
         [[ $is_hop_range ]] && is_hy2_url_port=$is_hop_range
-        is_url="$is_protocol://$password@$is_addr:$is_hy2_url_port?alpn=h3&insecure=1&allowInsecure=1&pinSHA256=$is_sha256#233boy-$net-$is_addr"
+        is_hy2_obfs_query=
+        if [[ ${is_hy2_obfs_type:-} && ${is_hy2_obfs_password:-} ]]; then
+            is_hy2_obfs_query="&obfs=$(jq -rn --arg value "$is_hy2_obfs_type" '$value|@uri')&obfs-password=$(jq -rn --arg value "$is_hy2_obfs_password" '$value|@uri')"
+        fi
+        is_url="$is_protocol://$password@$is_addr:$is_hy2_url_port?alpn=h3&insecure=1&allowInsecure=1&pinSHA256=$is_sha256$is_hy2_obfs_query#233boy-$net-$is_addr"
         is_info_str=($is_protocol $is_addr $port $password tls h3 "true (设置, 固定证书>证书指纹(SHA-256): $is_sha256)")
         if [[ $is_hop_range ]]; then
             is_info_show+=(22)
             is_info_str+=("$is_hop_range")
         fi
+        is_info_show+=(23)
+        is_info_str+=("${is_hy2_obfs_type:-关闭}")
         ;;
     tuic)
         is_insecure=1

@@ -145,6 +145,7 @@ if [[ -f $is_caddy_bin && -d $is_caddy_dir && $is_caddy_service ]]; then
 fi
 
 load port-hopping.sh
+load hy2-obfs.sh
 load core.sh
 [[ ! $args ]] && args=main
 main $args

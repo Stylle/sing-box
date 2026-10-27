@@ -52,4 +52,5 @@ jobs:
 
           bash -n install.sh sing-box.sh src/*.sh tests/*.sh
           bash tests/port-hopping-test.sh
+          bash tests/hy2-obfs-test.sh
           git push origin HEAD:main
