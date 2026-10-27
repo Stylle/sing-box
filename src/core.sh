@@ -162,17 +162,14 @@ get_pbk() {
 }
 
 show_list() {
-    PS3=''
-    COLUMNS=1
-    select i in "$@"; do echo; done &
-    wait
-    # i=0
-    # for v in "$@"; do
-    #     ((i++))
-    #     echo "$i) $v"
-    # done
-    # echo
-
+    # A background select plus bare wait can wait for unrelated service jobs
+    # and contend for terminal input. Rendering a menu must never read stdin.
+    local item number=1
+    for item in "$@"; do
+        printf '%d) %s\n' "$number" "$item"
+        number=$((number + 1))
+    done
+    printf '\n'
 }
 
 is_test() {
@@ -273,7 +270,11 @@ ask() {
     [[ $is_tmp_list ]] && show_list "${is_tmp_list[@]}"
     while :; do
         echo -ne $is_opt_input_msg
-        read REPLY
+        if ! IFS= read -r REPLY; then
+            msg "\n未读取到输入，已取消。"
+            unset is_opt_msg is_opt_input_msg is_tmp_list is_ask_result is_default_arg is_emtpy_exit
+            return 1
+        fi
         [[ ! $REPLY && $is_emtpy_exit ]] && exit
         [[ ! $REPLY && $is_default_arg ]] && export $is_ask_set=$is_default_arg && break
         [[ "$REPLY" == "${is_str}2${is_get}3${is_opt}3" && $is_ask_set == 'is_main_pick' ]] && {
@@ -485,8 +486,18 @@ change() {
     is_dont_show_info=
     # if not prefer args, show change list and then get change id.
     [[ ! $is_change_id ]] && {
-        ask set_change_list
-        is_change_id=${is_can_change[$REPLY - 1]}
+        unset is_change_str
+        ask set_change_list || return 1
+        # REPLY is global and shared by nested prompts. Match the selected
+        # action instead of indexing through a potentially changed REPLY.
+        is_change_id=
+        for is_action_id in "${is_can_change[@]}"; do
+            if [[ $is_change_str == "${change_list[$is_action_id]}" ]]; then
+                is_change_id=$is_action_id
+                break
+            fi
+        done
+        [[ $is_change_id ]] || { err "无法识别所选配置操作，请重新进入更改配置。"; return 1; }
     }
     case $is_change_id in
     full)
@@ -680,7 +691,16 @@ change() {
         ;;
     14)
         [[ $net != 'hysteria2' ]] && err "($is_config_file) 不支持 HY2 混淆."
+        msg "\n正在进入 HY2 混淆设置…"
+        declare -F hy2_obfs_change >/dev/null || {
+            err "混淆模块未加载，请执行 sing-box update sh 后重新运行 sing-box。"
+            return 1
+        }
         hy2_obfs_change "${3:-}" "${4:-}"
+        ;;
+    *)
+        err "无法识别更改操作 ($is_change_id)，请更新脚本后重试。"
+        return 1
         ;;
     esac
 }

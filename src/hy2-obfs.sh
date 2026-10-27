@@ -12,13 +12,14 @@ hy2_obfs_load() {
 
 hy2_obfs_restart() {
     if [[ ${is_systemd:-} ]]; then
-        systemctl restart "$is_core" || return 1
+        timeout 25 systemctl restart "$is_core" || return 1
     elif [[ ${is_openrc:-} ]]; then
-        rc-service "$is_core" restart || return 1
+        timeout 25 rc-service "$is_core" restart || return 1
     else
         return 1
     fi
-    port_hopping_apply_all 2>/dev/null || warn "端口跳跃规则应用失败，请检查 nftables/iptables."
+    # Don't rebuild hopping rules here: this edit never changes ports or
+    # hopping metadata, and netfilter rules survive a core-only restart.
     sleep 2
     pgrep -f "$is_core_bin" >/dev/null
 }
@@ -27,6 +28,10 @@ hy2_obfs_restart() {
 hy2_obfs_apply() (
     local mode=$1 secret=${2:-} source_file="$is_conf_dir/$is_config_file"
     local candidate backup remove_backup=1
+    type -P timeout >/dev/null || {
+        echo "缺少 timeout 命令，请安装 coreutils 后重试；原配置未修改。" >&2
+        return 1
+    }
     case $mode in
     on)
         jq -en --arg password "$secret" '$password | length > 0 and length <= 256 and (test("[\\x00-\\x1f\\x7f]") | not)' >/dev/null || {
@@ -53,8 +58,9 @@ hy2_obfs_apply() (
     else
         jq 'del(.inbounds[0].obfs)' "$backup" >"$candidate" || return 1
     fi
-    "$is_core_bin" check -c "$candidate" >/dev/null 2>&1 || {
-        echo "新配置未通过 sing-box 校验，原配置未修改。" >&2
+    echo "[1/3] 正在校验新配置（最多 20 秒）…"
+    timeout 20 "$is_core_bin" check -c "$candidate" >/dev/null 2>&1 || {
+        echo "新配置校验失败或超时，原配置未修改。" >&2
         return 1
     }
     cmp -s -- "$source_file" "$backup" || {
@@ -63,7 +69,9 @@ hy2_obfs_apply() (
     }
     chmod 600 "$candidate" || return 1
     mv -f -- "$candidate" "$source_file" || return 1
+    echo "[2/3] 正在重启 sing-box（最多 25 秒）…"
     if ! hy2_obfs_restart; then
+        echo "重启失败或超时，正在恢复原配置…" >&2
         if ! mv -f -- "$backup" "$source_file"; then
             remove_backup=0
             echo "恢复配置失败，原文件保存在：$backup" >&2
@@ -73,22 +81,24 @@ hy2_obfs_apply() (
         echo "混淆切换后服务启动失败，已恢复原配置。" >&2
         return 1
     fi
+    echo "[3/3] sing-box 已就绪，正在生成分享链接…"
 )
 
 hy2_obfs_change() {
-    local mode=${1,,} secret=${2:-}
+    local mode=${1:-} secret=${2:-}
+    mode=${mode,,}
     [[ ${is_protocol:-} == hysteria2 ]] || { err "只有 HY2 配置支持混淆开关。"; return 1; }
     if [[ ! $mode ]]; then
         msg "\n当前 HY2 混淆：${is_hy2_obfs_type:-关闭}"
-        echo -ne "请选择：1) 开启 Salamander / 修改密码  2) 关闭  0) 返回："
-        read -r mode || return 1
+        printf '%s\n' '1) 开启 Salamander / 修改密码' '2) 关闭混淆' '0) 返回（不修改配置）' '请输入选项并回车：'
+        read -r mode || { warn "未读取到输入，已取消；原配置未修改。"; return 1; }
     fi
     case $mode in
     1 | on | enable | salamander)
         mode=on
         if [[ ! $secret ]]; then
-            echo -ne "请输入混淆密码（留空保留现有密码，未设置则自动生成）："
-            read -r secret || return 1
+            printf '%s\n' '请输入混淆密码并回车（留空保留现有密码，未设置则自动生成）：'
+            read -r secret || { warn "未读取到密码输入，已取消；原配置未修改。"; return 1; }
             [[ $secret ]] || secret=${is_hy2_obfs_password:-}
         fi
         if [[ ! $secret ]]; then

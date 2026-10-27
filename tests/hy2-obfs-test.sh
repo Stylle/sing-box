@@ -91,6 +91,42 @@ printf '1\n\n' | hy2_obfs_change >/dev/null || true
 [[ $(jq -r '.inbounds[0].obfs.password' "$is_conf_dir/$is_config_file") == 1234567890abcdef1234567890abcdef ]]
 unset is_dont_auto_exit
 
+# Full single-node menu path, including selecting item 5 (not only CLI calls).
+# Rendering must not wait for another service/background job or consume input.
+case ${OSTYPE:-} in
+msys* | cygwin*) show_list first second >"$test_dir/menu-list.txt" ;;
+*)
+    sleep 30 &
+    menu_background_pid=$!
+    show_list first second >"$test_dir/menu-list.txt"
+    kill -0 "$menu_background_pid" # Old bare wait blocks until it exits.
+    kill -KILL "$menu_background_pid"
+    wait "$menu_background_pid" 2>/dev/null || true
+    ;;
+esac
+grep -Fxq '1) first' "$test_dir/menu-list.txt"
+grep -Fxq '2) second' "$test_dir/menu-list.txt"
+unset is_change_id is_change_str
+is_dont_show_info=1
+get info hy2 || true
+info
+menu_output=$(printf '5\n1\nmenu-password\n' | change 2>&1) || true
+[[ $menu_output == *'正在进入 HY2 混淆设置'* ]]
+[[ $menu_output == *'请输入选项并回车'* ]]
+[[ $menu_output == *'[1/3]'* && $menu_output == *'[2/3]'* && $menu_output == *'[3/3]'* ]]
+[[ $(jq -r '.inbounds[0].obfs.password' "$is_conf_dir/$is_config_file") == menu-password ]]
+cp "$is_conf_dir/$is_config_file" "$test_dir/before-menu-cancel.json"
+cancel_output=$(printf '5\n0\n' | change 2>&1) || true
+cmp "$test_dir/before-menu-cancel.json" "$is_conf_dir/$is_config_file"
+eof_output=$(printf '5\n' | change 2>&1) || true
+[[ $eof_output == *'未读取到输入'* ]]
+cmp "$test_dir/before-menu-cancel.json" "$is_conf_dir/$is_config_file"
+empty_menu_output=$(printf '' | change 2>&1) || true
+[[ $empty_menu_output == *'未读取到输入'* ]]
+close_output=$(printf '5\n2\n' | change 2>&1) || true
+[[ $close_output == *'HY2 混淆已关闭'* ]]
+jq -e '.inbounds[0]|has("obfs")|not' "$is_conf_dir/$is_config_file" >/dev/null
+
 jq '.inbounds[0].type="trojan"' "$test_dir/original.json" >"$is_conf_dir/trojan-443.json"
 is_protocol=trojan
 hy2_obfs_load "$is_conf_dir/trojan-443.json"
